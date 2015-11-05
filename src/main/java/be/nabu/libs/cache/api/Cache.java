@@ -7,7 +7,6 @@ public interface Cache {
 	public Object get(Object key) throws IOException;
 	public void clear(Object key) throws IOException;
 	public void clear() throws IOException;
-	public long getSize();
 	public void prune() throws IOException;
 	public void refresh() throws IOException;
 }
