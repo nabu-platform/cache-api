@@ -104,9 +104,22 @@ public class MemoryCache implements Cache {
 
 	@Override
 	public Object get(Object key) throws IOException {
-		MemoryCacheEntry memoryCacheEntry = entries.get(keySerializer == null ? key : serialize(key, keySerializer));
-		Object value = memoryCacheEntry == null ? null : memoryCacheEntry.getValue();
-		return value == null || valueSerializer == null ? value : deserialize(value, valueSerializer);
+		if (keySerializer != null) {
+			key = serialize(key, keySerializer);
+		}
+		MemoryCacheEntry memoryCacheEntry = entries.get(key);
+		if (memoryCacheEntry != null) {
+			if (timeoutManager != null && timeoutManager.isTimedOut(this, memoryCacheEntry)) {
+				synchronized(entries) {
+					entries.remove(key);
+				}
+			}
+			else {
+				Object value = memoryCacheEntry.getValue();
+				return value == null || valueSerializer == null ? value : deserialize(value, valueSerializer);
+			}
+		}
+		return null;
 	}
 
 	public DataSerializer<?> getKeySerializer() {
