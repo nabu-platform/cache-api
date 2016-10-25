@@ -3,16 +3,19 @@ package be.nabu.libs.cache.memory;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
-import be.nabu.libs.cache.api.Cache;
+import be.nabu.libs.cache.api.CacheEntry;
 import be.nabu.libs.cache.api.CacheRefresher;
 import be.nabu.libs.cache.api.CacheTimeoutManager;
 import be.nabu.libs.cache.api.DataSerializer;
+import be.nabu.libs.cache.api.ExplorableCache;
 
-public class MemoryCache implements Cache {
+public class MemoryCache implements ExplorableCache {
 
 	private Map<Object, MemoryCacheEntry> entries = new HashMap<Object, MemoryCacheEntry>();
 	private DataSerializer<?> keySerializer, valueSerializer;
@@ -136,4 +139,15 @@ public class MemoryCache implements Cache {
 		this.valueSerializer = valueSerializer;
 	}
 
+	@Override
+	public Collection<CacheEntry> getEntries() {
+		synchronized(entries) {
+			return new ArrayList<CacheEntry>(entries.values());
+		}
+	}
+
+	@Override
+	public CacheEntry getEntry(Object key) {
+		return entries.get(key);
+	}
 }
