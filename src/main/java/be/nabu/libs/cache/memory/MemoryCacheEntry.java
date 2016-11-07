@@ -66,7 +66,7 @@ public class MemoryCacheEntry implements Comparable<MemoryCacheEntry>, CacheEntr
 
 	@Override
 	public long getSize() {
-		return -1;
+		return value instanceof byte[] ? ((byte[]) value).length : -1;
 	}
 
 	@Override
