@@ -148,6 +148,9 @@ public class MemoryCache implements ExplorableCache {
 
 	@Override
 	public CacheEntry getEntry(Object key) {
+		if (keySerializer != null) {
+			key = serialize(key, keySerializer);
+		}
 		return entries.get(key);
 	}
 }
