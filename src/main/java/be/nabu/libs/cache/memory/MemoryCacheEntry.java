@@ -78,4 +78,8 @@ public class MemoryCacheEntry implements Comparable<MemoryCacheEntry>, CacheEntr
 	public Date getLastModified() {
 		return created;
 	}
+	
+	public void accessed() {
+		this.accessed = new Date();
+	}
 }

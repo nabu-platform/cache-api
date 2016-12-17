@@ -8,6 +8,7 @@ import be.nabu.libs.cache.api.CacheTimeoutManager;
 
 public class AccessBasedTimeoutManager implements CacheTimeoutManager {
 
+	// setting a timeout of 0 will make it indefinite
 	private long cacheTimeout;
 
 	public AccessBasedTimeoutManager(long cacheTimeout) {
@@ -16,7 +17,7 @@ public class AccessBasedTimeoutManager implements CacheTimeoutManager {
 	
 	@Override
 	public boolean isTimedOut(Cache cache, CacheEntry entry) {
-		return entry.getLastAccessed().before(new Date(new Date().getTime() - cacheTimeout));
+		return cacheTimeout == 0 ? false : entry.getLastAccessed().before(new Date(new Date().getTime() - cacheTimeout));
 	}
 
 }

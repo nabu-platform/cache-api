@@ -151,6 +151,18 @@ public class MemoryCache implements ExplorableCache {
 		if (keySerializer != null) {
 			key = serialize(key, keySerializer);
 		}
-		return entries.get(key);
+		MemoryCacheEntry memoryCacheEntry = entries.get(key);
+		if (memoryCacheEntry != null) {
+			if (timeoutManager != null && timeoutManager.isTimedOut(this, memoryCacheEntry)) {
+				synchronized(entries) {
+					entries.remove(key);
+				}
+			}
+			else {
+				memoryCacheEntry.accessed();
+				return memoryCacheEntry;
+			}
+		}
+		return null;
 	}
 }
