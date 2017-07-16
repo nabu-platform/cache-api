@@ -1,5 +1,8 @@
 package be.nabu.libs.cache.memory;
 
+import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Date;
 
@@ -10,6 +13,7 @@ public class MemoryCacheEntry implements Comparable<MemoryCacheEntry>, CacheEntr
 	private Object key;
 	private Object value;
 	private Date created, accessed;
+	private String hash;
 
 	public MemoryCacheEntry(Object key, Object value) {
 		this.key = key;
@@ -81,5 +85,33 @@ public class MemoryCacheEntry implements Comparable<MemoryCacheEntry>, CacheEntr
 	
 	public void accessed() {
 		this.accessed = new Date();
+	}
+	
+	public String getHash() {
+		if (hash == null && (value instanceof byte[] || value instanceof String)) {
+			try {
+				this.hash = hash(value instanceof byte[] ? (byte[]) value : ((String) value).getBytes("UTF-8"), "MD5");
+			}
+			catch (IOException e) {
+				// ignore...
+			}
+		}
+		return hash;
+	}
+	
+	public static String hash(byte[] bytes, String algorithm) throws IOException {
+		try {
+			MessageDigest digest = MessageDigest.getInstance(algorithm);
+			digest.update(bytes, 0, bytes.length);
+			byte [] hash = digest.digest();
+			StringBuffer string = new StringBuffer();
+			for (int i = 0; i < hash.length; ++i) {
+				string.append(Integer.toHexString((hash[i] & 0xFF) | 0x100).substring(1, 3));
+			}
+			return string.toString();
+		}
+		catch (NoSuchAlgorithmException e) {
+			throw new RuntimeException(e);
+		}
 	}
 }

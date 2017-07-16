@@ -12,10 +12,11 @@ import java.util.Map;
 import be.nabu.libs.cache.api.CacheEntry;
 import be.nabu.libs.cache.api.CacheRefresher;
 import be.nabu.libs.cache.api.CacheTimeoutManager;
+import be.nabu.libs.cache.api.CacheWithHash;
 import be.nabu.libs.cache.api.DataSerializer;
 import be.nabu.libs.cache.api.ExplorableCache;
 
-public class MemoryCache implements ExplorableCache {
+public class MemoryCache implements ExplorableCache, CacheWithHash {
 
 	private Map<Object, MemoryCacheEntry> entries = new HashMap<Object, MemoryCacheEntry>();
 	private DataSerializer<?> keySerializer, valueSerializer;
@@ -164,5 +165,11 @@ public class MemoryCache implements ExplorableCache {
 			}
 		}
 		return null;
+	}
+
+	@Override
+	public String hash(Object key) {
+		CacheEntry entry = getEntry(key);
+		return entry == null ? null : ((MemoryCacheEntry) entry).getHash();
 	}
 }
