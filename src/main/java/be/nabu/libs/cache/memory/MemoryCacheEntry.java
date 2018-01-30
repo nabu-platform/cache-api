@@ -46,6 +46,7 @@ public class MemoryCacheEntry implements Comparable<MemoryCacheEntry>, CacheEntr
 		this.value = value;
 		this.created = new Date();
 		this.accessed = this.created;
+		this.hash = null;
 	}
 	
 	@Override
