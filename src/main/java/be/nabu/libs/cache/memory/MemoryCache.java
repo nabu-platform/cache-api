@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Map.Entry;
 
 import be.nabu.libs.cache.api.CacheEntry;
 import be.nabu.libs.cache.api.CacheRefresher;
@@ -18,14 +19,23 @@ import be.nabu.libs.cache.api.ExplorableCache;
 
 public class MemoryCache implements ExplorableCache, CacheWithHash {
 
-	private Map<Object, MemoryCacheEntry> entries = new HashMap<Object, MemoryCacheEntry>();
+	private Map<Object, MemoryCacheEntry> entries;
 	private DataSerializer<?> keySerializer, valueSerializer;
 	private CacheRefresher refresher;
 	private CacheTimeoutManager timeoutManager;
+	// if we want to for example cluster the memory cache entries, we need to serialize the entry key in it
+	// we want to be able to turn this off to avoid the overhead
+	private boolean serializeEntryKey;
 
-	public MemoryCache(CacheRefresher cacheRefresher, CacheTimeoutManager timeoutManager) {
+	public MemoryCache(CacheRefresher cacheRefresher, CacheTimeoutManager timeoutManager, Map<Object, MemoryCacheEntry> entries, boolean serializeEntryKey) {
 		this.refresher = cacheRefresher;
 		this.timeoutManager = timeoutManager;
+		this.entries = entries;
+		this.serializeEntryKey = serializeEntryKey;
+	}
+	
+	public MemoryCache(CacheRefresher cacheRefresher, CacheTimeoutManager timeoutManager) {
+		this(cacheRefresher, timeoutManager, new HashMap<Object, MemoryCacheEntry>(), false);
 	}
 
 	@Override
@@ -62,12 +72,17 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 			entries.clear();
 		}
 	}
+	
+	public Map<Object, MemoryCacheEntry> getEntryMap() {
+		return entries;
+	}
 
 	@Override
 	public boolean put(Object key, Object value) throws IOException {
-		MemoryCacheEntry entry = new MemoryCacheEntry(key, valueSerializer == null ? value : serialize(value, valueSerializer));
+		Object serializedKey = keySerializer == null ? key : serialize(key, keySerializer);
+		MemoryCacheEntry entry = new MemoryCacheEntry(serializeEntryKey ? serializedKey : key, valueSerializer == null ? value : serialize(value, valueSerializer));
 		synchronized(entries) {
-			entries.put(keySerializer == null ? key : serialize(key, keySerializer), entry);
+			entries.put(serializedKey, entry);
 		}
 		return true;
 	}
@@ -91,27 +106,44 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 	public void refresh() throws IOException {
 		if (refresher != null) {
 			synchronized(entries) {
-				Iterator<MemoryCacheEntry> iterator = entries.values().iterator();
+				Iterator<Entry<Object, MemoryCacheEntry>> iterator = entries.entrySet().iterator();
+				// in case of a cluster, modifying the entry directly will not be picked up by the clustering logic
+				// we need to remerge the updated values to reflect the changes in all the nodes
+				Map<Object, MemoryCacheEntry> remerge = new HashMap<Object, MemoryCacheEntry>();
 				while(iterator.hasNext()) {
-					MemoryCacheEntry entry = iterator.next();
-					Object refreshed = refresher.refresh(entry.getKey());
+					Entry<Object, MemoryCacheEntry> next = iterator.next();
+					MemoryCacheEntry entry = next.getValue();
+					Object key = entry.getKey();
+					// if the key has been serialized, deserialize it for refreshing
+					if (serializeEntryKey && keySerializer != null) {
+						key = deserialize(key, keySerializer);
+					}
+					Object refreshed = refresher.refresh(key);
 					if (refreshed == null) {
 						iterator.remove();
 					}
 					else {
 						entry.reload(valueSerializer == null ? refreshed : serialize(refreshed, valueSerializer));
+						remerge.put(next.getKey(), entry);
 					}
 				}
+				entries.putAll(remerge);
 			}
 		}
 	}
 
 	@Override
 	public Object get(Object key) throws IOException {
-		if (keySerializer != null) {
+		// bit of a hack: we want memory cache entries to be serializable, so we send in serialized keys
+		// that means anyone who gets a hold of the key from the entry, actually has the serialized version
+		// the hazelcast map will not do an equals to find a match but instead serialize the incoming key to check it against existing keys
+		// this means we can only request the instance if it has indeed been serialized
+		// note that the serialization routine here creates a string, not a byte array
+		MemoryCacheEntry memoryCacheEntry = key instanceof String ? entries.get(key) : null;
+		if (memoryCacheEntry == null && keySerializer != null) {
 			key = serialize(key, keySerializer);
+			memoryCacheEntry = entries.get(key);
 		}
-		MemoryCacheEntry memoryCacheEntry = entries.get(key);
 		if (memoryCacheEntry != null) {
 			if (timeoutManager != null && timeoutManager.isTimedOut(this, memoryCacheEntry)) {
 				synchronized(entries) {
@@ -149,10 +181,12 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 
 	@Override
 	public CacheEntry getEntry(Object key) {
-		if (keySerializer != null) {
+		// check logic above in get()
+		MemoryCacheEntry memoryCacheEntry = key instanceof String ? entries.get(key) : null;
+		if (memoryCacheEntry == null && keySerializer != null) {
 			key = serialize(key, keySerializer);
+			memoryCacheEntry = entries.get(key);
 		}
-		MemoryCacheEntry memoryCacheEntry = entries.get(key);
 		if (memoryCacheEntry != null) {
 			if (timeoutManager != null && timeoutManager.isTimedOut(this, memoryCacheEntry)) {
 				synchronized(entries) {
