@@ -119,8 +119,12 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 						key = deserialize(key, keySerializer);
 					}
 					Object refreshed = refresher.refresh(key);
+					// if we can not refresh it _and_ the current value has outlived its usefulness, remove it
+					// otherwise the old value will remain until it is no longer valid
 					if (refreshed == null) {
-						iterator.remove();
+						if (timeoutManager != null && timeoutManager.isTimedOut(this, next.getValue())) {
+							iterator.remove();
+						}
 					}
 					else {
 						entry.reload(valueSerializer == null ? refreshed : serialize(refreshed, valueSerializer));
