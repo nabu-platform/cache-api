@@ -103,6 +103,36 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 	}
 
 	@Override
+	public void refresh(Object key) throws IOException {
+		if (refresher != null) {
+			synchronized(entries) {
+				Object unserializedKey = null;
+				// see description in get(key) for dirty-ness
+				MemoryCacheEntry memoryCacheEntry = key instanceof String ? entries.get(key) : null;
+				if (memoryCacheEntry == null && keySerializer != null) {
+					unserializedKey = key;
+					key = serialize(key, keySerializer);
+					memoryCacheEntry = entries.get(key);
+				}
+				if (memoryCacheEntry != null) {
+					if (unserializedKey == null) {
+						unserializedKey = keySerializer != null ? deserialize(key, keySerializer) : key;
+					}
+					Object refreshed = refresher.refresh(unserializedKey);
+					if (refreshed == null) {
+						if (timeoutManager != null && timeoutManager.isTimedOut(this, memoryCacheEntry)) {
+							entries.remove(key);
+						}
+					}
+					else {
+						memoryCacheEntry.reload(valueSerializer == null ? refreshed : serialize(refreshed, valueSerializer));
+					}
+				}
+			}
+		}
+	}
+	
+	@Override
 	public void refresh() throws IOException {
 		if (refresher != null) {
 			synchronized(entries) {

@@ -9,4 +9,5 @@ public interface Cache {
 	public void clear() throws IOException;
 	public void prune() throws IOException;
 	public void refresh() throws IOException;
+	public void refresh(Object key) throws IOException;
 }
