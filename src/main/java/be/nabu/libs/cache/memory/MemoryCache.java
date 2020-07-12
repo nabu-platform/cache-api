@@ -7,9 +7,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import be.nabu.libs.cache.api.AnnotatableCache;
+import be.nabu.libs.cache.api.CacheAnnotater;
 import be.nabu.libs.cache.api.CacheEntry;
 import be.nabu.libs.cache.api.CacheRefresher;
 import be.nabu.libs.cache.api.CacheTimeoutManager;
@@ -17,8 +20,9 @@ import be.nabu.libs.cache.api.CacheWithHash;
 import be.nabu.libs.cache.api.DataSerializer;
 import be.nabu.libs.cache.api.ExplorableCache;
 
-public class MemoryCache implements ExplorableCache, CacheWithHash {
+public class MemoryCache implements ExplorableCache, CacheWithHash, AnnotatableCache {
 
+	private Map<Object, Map<String, String>> annotations;
 	private Map<Object, MemoryCacheEntry> entries;
 	private DataSerializer<?> keySerializer, valueSerializer;
 	private CacheRefresher refresher;
@@ -26,22 +30,33 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 	// if we want to for example cluster the memory cache entries, we need to serialize the entry key in it
 	// we want to be able to turn this off to avoid the overhead
 	private boolean serializeEntryKey;
-
-	public MemoryCache(CacheRefresher cacheRefresher, CacheTimeoutManager timeoutManager, Map<Object, MemoryCacheEntry> entries, boolean serializeEntryKey) {
+	private CacheAnnotater annotater;
+	
+	public MemoryCache(CacheRefresher cacheRefresher, CacheTimeoutManager timeoutManager, Map<Object, MemoryCacheEntry> entries, Map<Object, Map<String, String>> annotations, boolean serializeEntryKey) {
 		this.refresher = cacheRefresher;
 		this.timeoutManager = timeoutManager;
 		this.entries = entries;
+		this.annotations = annotations;
 		this.serializeEntryKey = serializeEntryKey;
 	}
 	
 	public MemoryCache(CacheRefresher cacheRefresher, CacheTimeoutManager timeoutManager) {
-		this(cacheRefresher, timeoutManager, new HashMap<Object, MemoryCacheEntry>(), false);
+		this(cacheRefresher, timeoutManager, new HashMap<Object, MemoryCacheEntry>(), new HashMap<Object, Map<String, String>>(), false);
 	}
 
 	@Override
 	public void clear(Object key) {
 		synchronized(entries) {
-			entries.remove(keySerializer == null ? key : serialize(key, keySerializer));
+			Object serializedKey = keySerializer == null ? key : serialize(key, keySerializer);
+			entries.remove(serializedKey);
+			annotations.remove(serializedKey);
+		}
+	}
+	
+	private void serializedClear(Object serializedKey) {
+		synchronized(entries) {
+			entries.remove(serializedKey);
+			annotations.remove(serializedKey);
 		}
 	}
 
@@ -79,12 +94,26 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 
 	@Override
 	public boolean put(Object key, Object value) throws IOException {
-		Object serializedKey = keySerializer == null ? key : serialize(key, keySerializer);
-		MemoryCacheEntry entry = new MemoryCacheEntry(serializeEntryKey ? serializedKey : key, valueSerializer == null ? value : serialize(value, valueSerializer));
-		synchronized(entries) {
-			entries.put(serializedKey, entry);
+		try {
+			Object serializedKey = keySerializer == null ? key : serialize(key, keySerializer);
+			MemoryCacheEntry entry = new MemoryCacheEntry(serializeEntryKey ? serializedKey : key, valueSerializer == null ? value : serialize(value, valueSerializer));
+			// load the annotations _before_ setting the entry, if annotating fails, we don't store the entry. if you are expecting annotated caches and they fail, this can be dangerous as you can't reset the cache as you would expect (which is the primary reason for annotations)
+			Map<String, String> annotations = null;
+			if (annotater != null) {
+				annotations = annotater.annotate(key, value);
+			}
+			synchronized(entries) {
+				entries.put(serializedKey, entry);
+				if (annotations != null) {
+					serializedAnnotate(serializedKey, annotations);
+				}
+			}
+			return true;
 		}
-		return true;
+		catch (Exception e) {
+			e.printStackTrace();
+			return false;
+		}
 	}
 
 	@Override
@@ -126,6 +155,15 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 					}
 					else {
 						memoryCacheEntry.reload(valueSerializer == null ? refreshed : serialize(refreshed, valueSerializer));
+						// if annotation fails, we retain original annotations
+						if (annotater != null) {
+							try {
+								serializedAnnotate(key, annotater.annotate(unserializedKey, refreshed));
+							}
+							catch (Exception e) {
+								e.printStackTrace();
+							}
+						}
 					}
 				}
 			}
@@ -159,6 +197,15 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 					else {
 						entry.reload(valueSerializer == null ? refreshed : serialize(refreshed, valueSerializer));
 						remerge.put(next.getKey(), entry);
+						// if annotation fails, we retain original annotations
+						if (annotater != null) {
+							try {
+								serializedAnnotate(key, annotater.annotate(key, refreshed));
+							}
+							catch (Exception e) {
+								e.printStackTrace();
+							}
+						}
 					}
 				}
 				entries.putAll(remerge);
@@ -239,5 +286,66 @@ public class MemoryCache implements ExplorableCache, CacheWithHash {
 	public String hash(Object key) {
 		CacheEntry entry = getEntry(key);
 		return entry == null ? null : ((MemoryCacheEntry) entry).getHash();
+	}
+
+	@Override
+	public void annotate(Object key, Map<String, String> annotations) {
+		if (annotations != null && !annotations.isEmpty()) {
+			Object serializedKey = keySerializer == null ? key : serialize(key, keySerializer);
+			serializedAnnotate(serializedKey, annotations);
+		}
+	}
+	
+	private void serializedAnnotate(Object serializedKey, Map<String, String> annotations) {
+		if (annotations != null && !annotations.isEmpty()) {
+			synchronized(this.annotations) {
+				if (!this.annotations.containsKey(serializedKey)) {
+					this.annotations.put(serializedKey, new HashMap<String, String>(annotations));
+				}
+				else {
+					this.annotations.get(serializedKey).putAll(annotations);
+				}
+			}
+		}
+	}
+
+	@Override
+	public void clear(Map<String, String> annotations) {
+		if (annotations != null && !annotations.isEmpty()) {
+			List<Object> clear = new ArrayList<Object>();
+			for (Map.Entry<Object, Map<String, String>> entry : this.annotations.entrySet()) {
+				Map<String, String> entryAnnotations = entry.getValue();
+				boolean match = true;
+				for (Map.Entry<String, String> annotation : annotations.entrySet()) {
+					String sourceValue = entryAnnotations.get(annotation.getKey());
+					String targetValue = annotation.getValue();
+					if (targetValue == null && sourceValue != null) {
+						match = false;
+					}
+					else if (targetValue != null && sourceValue == null) {
+						match = false;
+					}
+					else if (targetValue != null && !targetValue.equals(sourceValue)) {
+						match = false;
+					}
+					if (!match) {
+						break;
+					}
+				}
+				if (match) {
+					clear.add(entry.getKey());
+				}
+			}
+			for (Object single : clear) {
+				serializedClear(single);
+			}
+		}
+	}
+
+	public CacheAnnotater getAnnotater() {
+		return annotater;
+	}
+	public void setAnnotater(CacheAnnotater annotater) {
+		this.annotater = annotater;
 	}
 }
