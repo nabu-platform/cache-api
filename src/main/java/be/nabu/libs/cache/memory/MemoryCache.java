@@ -94,13 +94,16 @@ public class MemoryCache implements ExplorableCache, CacheWithHash, AnnotatableC
 
 	@Override
 	public boolean put(Object key, Object value) throws IOException {
+		boolean annotateError = false;
 		try {
 			Object serializedKey = keySerializer == null ? key : serialize(key, keySerializer);
 			MemoryCacheEntry entry = new MemoryCacheEntry(serializeEntryKey ? serializedKey : key, valueSerializer == null ? value : serialize(value, valueSerializer));
 			// load the annotations _before_ setting the entry, if annotating fails, we don't store the entry. if you are expecting annotated caches and they fail, this can be dangerous as you can't reset the cache as you would expect (which is the primary reason for annotations)
 			Map<String, String> annotations = null;
 			if (annotater != null) {
+				annotateError = true;
 				annotations = annotater.annotate(key, value);
+				annotateError = false;
 			}
 			synchronized(entries) {
 				entries.put(serializedKey, entry);
@@ -111,7 +114,9 @@ public class MemoryCache implements ExplorableCache, CacheWithHash, AnnotatableC
 			return true;
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			if (!annotateError) {
+				e.printStackTrace();
+			}
 			return false;
 		}
 	}
